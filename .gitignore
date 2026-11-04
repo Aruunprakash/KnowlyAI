@@ -1,1 +1,20 @@
+# Environment
+.venv/
+.venv312/
+venv/
+
+# PyCharm
 .idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment variables
+.env
+
+# Vector database
+chroma_db/
+
+# macOS
+.DS_Store
