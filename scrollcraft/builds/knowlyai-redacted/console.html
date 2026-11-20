@@ -1,0 +1,1093 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KnowlyAI · console</title>
+<meta name="description" content="KnowlyAI answers questions about your own PDFs and carries the page number behind every sentence. Raise the evidence threshold and watch it refuse rather than guess.">
+<meta name="color-scheme" content="light">
+<!-- Where the KnowlyAI API runs (uvicorn api.main:app). Empty means same origin.
+     Override per visit with ?api=http://host:port -->
+<meta name="knowly-api" content="http://127.0.0.1:8000">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23561530'/><rect x='6' y='13' width='20' height='6' fill='%23F5AD18'/></svg>"><rect width='32' height='32' rx='7' fill='%230A0C0F'/><path d='M11 8v16M11 16l9-8M11 16l9 8' stroke='%23E9A13B' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round' fill='none'/></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@400;500;700&display=swap">
+
+<link rel="stylesheet" href="scrollcraft.css">
+<style>
+/* ===========================================================================
+   KnowlyAI · dense instrument
+   Six tokens and three faces. Everything else derives.
+   The accent is a highlighter: it marks what is evidenced, and it is the only
+   colour on the page. The peak works by taking it away.
+   ======================================================================== */
+:root {
+  --sc-canvas:     #F0F0EC;
+  --sc-surface:    #FFFFFF;
+  --sc-ink:        #561530;
+  --sc-ink-soft:   #5E4452;
+  --sc-accent:     #F5AD18;
+  --sc-accent-ink: #561530;
+
+  --sc-font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --sc-font-text:    "Archivo", system-ui, sans-serif;
+  --sc-font-mono:    "IBM Plex Mono", ui-monospace, monospace;
+
+  /* instrument-specific */
+  --k-line:    #D3D3CC;
+  --k-line-up: #8F8F88;
+  --k-inset:   #E8E8E2;
+  --k-bar:     44px;
+  --k-accent-text: #9E1C60;   /* amber is too light as small text on paper; berry keeps 6.6:1 */
+}
+
+/* --------------------------------------------------------------- shell -- */
+
+body { padding-bottom: var(--k-bar); }
+
+.k-mono {
+  font-family: var(--sc-font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.k-label {
+  font-family: var(--sc-font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sc-ink-soft);
+}
+
+.k-rule { height: 1px; background: var(--k-line); border: 0; }
+
+/* A panel is the page's only container. It earns its border by being a real
+   region of a surface, with its own header strip and its own state. */
+.k-panel {
+  background: var(--sc-surface);
+  border: 1px solid var(--k-line);
+  border-radius: 6px;
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.028) inset, 0 10px 28px -18px #000;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.k-panel__hd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--k-line);
+  flex: 0 0 auto;
+}
+.k-panel__bd { padding: 12px; min-height: 0; }
+
+.k-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--sc-accent); flex: 0 0 auto; }
+.k-dot--idle { background: var(--k-line-up); }
+
+/* ------------------------------------------------------------ chrome -- */
+/* The whole navigation. No wordmark-and-CTA marketing bar: this is the
+   product's own status bar, and the segments are the only way around. */
+
+.bar {
+  position: fixed;
+  inset: auto 0 0 0;
+  z-index: 60;
+  height: var(--k-bar);
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  background: color-mix(in oklab, var(--sc-canvas) 86%, #000);
+  border-top: 1px solid var(--k-line);
+  backdrop-filter: blur(10px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.bar__mark {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px 0 14px;
+  border-right: 1px solid var(--k-line);
+  flex: 0 0 auto;
+}
+.bar__mark svg { width: 15px; height: 15px; display: block; }
+.bar__name { font-family: var(--sc-font-display); font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+
+.bar__nav { display: flex; align-items: stretch; overflow-x: auto; scrollbar-width: none; flex: 1 1 auto; }
+.bar__nav::-webkit-scrollbar { display: none; }
+.bar__seg {
+  display: flex; align-items: center;
+  padding: 0 13px;
+  font-family: var(--sc-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sc-ink-soft);
+  text-decoration: none;
+  white-space: nowrap;
+  border-right: 1px solid var(--k-line);
+  position: relative;
+  transition: color 140ms var(--sc-ease-out), background-color 140ms var(--sc-ease-out);
+}
+.bar__seg:hover { color: var(--sc-ink); background: #ffffff1a; }
+.bar__seg[aria-current="true"] { color: var(--sc-ink); }
+.bar__seg[aria-current="true"]::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 2px; background: var(--sc-accent);
+}
+
+.bar__read {
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 14px;
+  border-left: 1px solid var(--k-line);
+  font-family: var(--sc-font-mono);
+  font-size: 11px;
+  color: var(--sc-ink-soft);
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+.bar__read b { color: var(--sc-ink); font-weight: 500; }
+.bar__read .is-warn { color: var(--k-accent-text); }
+
+@media (max-width: 900px) {
+  .bar__nav { display: none; }
+  .bar__read { margin-left: auto; gap: 12px; font-size: 10.5px; }
+}
+
+/* ------------------------------------------------------------- layout -- */
+
+.k-wrap { width: min(100% - (var(--sc-gutter) * 2), 1240px); margin-inline: auto; }
+
+.k-stage {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  height: 100%;
+  padding-block: clamp(3rem, 7vh, 5rem);
+  padding-bottom: calc(clamp(3rem, 7vh, 5rem) + var(--k-bar));
+}
+
+/* =========================================================== act 1 · index */
+
+.console { display: grid; grid-template-columns: 240px minmax(0, 1fr) 210px; gap: 14px; }
+/* Stacked, the question leads: it is the one thing that has to be on the
+   landing screen. The side panels are data and can follow it. */
+@media (max-width: 1040px) {
+  .console { grid-template-columns: 1fr; gap: 10px; }
+  .console__q   { order: 1; }
+  .console__src { order: 2; }
+  .console__tele{ order: 3; }
+  /* planes that slide relative to the copy only make sense side by side */
+  .console__src, .console__tele { transform: none !important; }
+}
+
+.src { display: flex; flex-direction: column; gap: 1px; }
+.src__row {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr); gap: 9px;
+  padding: 9px 4px; align-items: start;
+  border-bottom: 1px solid var(--k-line);
+}
+.src__row:last-child { border-bottom: 0; }
+.src__ico { color: var(--sc-ink-soft); margin-top: 1px; }
+.src__ico svg { width: 13px; height: 13px; display: block; }
+.src__name { font-size: 12.5px; font-weight: 500; letter-spacing: -0.005em; overflow-wrap: anywhere; }
+.src__meta { font-family: var(--sc-font-mono); font-size: 10.5px; color: var(--sc-ink-soft); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+.q { display: flex; align-items: baseline; gap: 10px; padding: 14px 14px 13px; border-bottom: 1px solid var(--k-line); }
+.q__caret { color: var(--k-accent-text); font-family: var(--sc-font-mono); font-size: 14px; flex: 0 0 auto; }
+.q__text {
+  font-family: var(--sc-font-display);
+  font-weight: 600;
+  font-size: clamp(1.1rem, 2.4vw, 1.5rem);
+  line-height: 1.22;
+  letter-spacing: -0.021em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+.empty { padding: 16px 14px 18px; }
+.empty__line { font-size: 13.5px; line-height: 1.62; color: var(--sc-ink-soft); max-width: 46ch; text-wrap: pretty; }
+.empty__line b { color: var(--sc-ink); font-weight: 500; }
+
+.tele { display: flex; flex-direction: column; gap: 0; }
+.tele__row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 7px 2px; border-bottom: 1px solid var(--k-line); }
+.tele__row:last-child { border-bottom: 0; }
+.tele__k { font-family: var(--sc-font-mono); font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sc-ink-soft); }
+.tele__v { font-family: var(--sc-font-mono); font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* the ruled ground behind act one, parallaxed just enough to read as depth */
+.log { margin-top: 14px; }
+.log__bd { padding: 4px 12px 8px; }
+.log__row {
+  display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: baseline;
+  padding: 6px 0; border-bottom: 1px solid var(--k-line);
+  font-family: var(--sc-font-mono); font-size: 11.5px; font-variant-numeric: tabular-nums;
+}
+.log__row:last-child { border-bottom: 0; }
+.log__ok { color: var(--k-accent-text); }
+.log__idle { color: #6A6A64; }
+.log__msg { color: var(--sc-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log__val { color: var(--sc-ink-soft); }
+@media (max-width: 620px) { .log__val { display: none; } }
+
+/* The ruled bed needs a positioned ancestor. It must NOT be the stage itself:
+   the engine sticks that element, and an inline position overrides it. */
+.k-stage--bed { position: relative; }
+.k-stage--bed > :not(.grid-bed) { position: relative; z-index: 1; }
+
+.grid-bed {
+  position: absolute; inset: -14% 0 -14% 0; pointer-events: none; z-index: 0;
+  background-image: linear-gradient(to right, var(--k-line) 1px, transparent 1px);
+  background-size: 68px 100%;
+  -webkit-mask-image: radial-gradient(120% 70% at 50% 45%, #000 20%, transparent 78%);
+  mask-image: radial-gradient(120% 70% at 50% 45%, #000 20%, transparent 78%);
+  opacity: 0.5;
+}
+
+/* ======================================================= act 2 · unsourced */
+
+.sec { padding-block: var(--sc-section); position: relative; }
+.sec--tight { padding-block: clamp(3.25rem, 9vh, 6rem); }
+
+.warn-strip {
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 6px 11px 6px 9px;
+  border: 1px solid var(--k-line-up);
+  border-radius: 999px;
+  font-family: var(--sc-font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sc-ink-soft);
+}
+.warn-strip svg { width: 13px; height: 13px; color: var(--k-accent-text); }
+
+.unsourced { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 28px; align-items: start; margin-top: 22px; }
+@media (max-width: 920px) { .unsourced { grid-template-columns: 1fr; gap: 18px; } }
+
+.claim { position: relative; padding: 11px 0 11px 20px; border-left: 1px solid var(--k-line); }
+.claim + .claim { margin-top: 2px; }
+.claim__t { font-size: 15.5px; line-height: 1.66; color: var(--sc-ink); text-wrap: pretty; }
+.claim__flag {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 8px;
+  font-family: var(--sc-font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--k-accent-text);
+}
+.claim__flag::before { content: ""; width: 14px; height: 1px; background: currentColor; }
+.claim::after {
+  content: ""; position: absolute; left: -1px; top: 11px; bottom: 11px; width: 1px; background: var(--sc-accent);
+  transform: scaleY(var(--k-flag, 0)); transform-origin: 50% 0;
+  transition: transform 520ms var(--sc-ease-out);
+}
+.sc-in .claim::after { --k-flag: 1; }
+
+.verdict { font-family: var(--sc-font-display); font-weight: 600; font-size: clamp(1.15rem, 2.5vw, 1.6rem); line-height: 1.26; letter-spacing: -0.021em; text-wrap: balance; }
+.verdict em { font-style: normal; color: var(--k-accent-text); }
+.verdict + p { margin-top: 12px; font-size: 13.5px; line-height: 1.64; color: var(--sc-ink-soft); max-width: 40ch; }
+
+/* ======================================================== act 3 · passages */
+
+.strip { display: flex; align-items: stretch; gap: 12px; padding-inline: var(--sc-gutter); }
+.strip__lead { flex: 0 0 min(78vw, 310px); display: flex; flex-direction: column; justify-content: center; gap: 12px; }
+.strip__lead h2 { font-family: var(--sc-font-display); font-weight: 600; font-size: clamp(1.1rem, 2.3vw, 1.45rem); letter-spacing: -0.021em; line-height: 1.22; }
+.strip__lead p { font-size: 13px; line-height: 1.62; color: var(--sc-ink-soft); }
+
+.chunk {
+  flex: 0 0 min(72vw, 274px);
+  min-height: min(44vh, 400px);
+  display: flex; flex-direction: column;
+  background: var(--sc-surface);
+  border: 1px solid var(--k-line);
+  border-radius: 6px;
+  overflow: hidden;
+  /* staggered settle, driven from act progress; see the settle rule below */
+  opacity: var(--k-settle, 1);
+  transform: translate3d(0, calc((1 - var(--k-settle, 1)) * 14px), 0);
+}
+.chunk__hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--k-line); }
+.chunk__pg { font-family: var(--sc-font-mono); font-size: 11px; font-weight: 500; color: var(--k-accent-text); font-variant-numeric: tabular-nums; }
+.chunk__id { font-family: var(--sc-font-mono); font-size: 10px; color: var(--sc-ink-soft); }
+.chunk__t { padding: 11px 10px 12px; font-size: 12.5px; line-height: 1.6; color: var(--sc-ink); }
+.chunk__ft { margin-top: auto; padding: 7px 10px; border-top: 1px solid var(--k-line); font-family: var(--sc-font-mono); font-size: 10px; color: var(--sc-ink-soft); font-variant-numeric: tabular-nums; }
+
+.strip__note { flex: 0 0 min(72vw, 230px); display: flex; align-items: center; }
+.strip__note p { font-size: 12.5px; line-height: 1.6; color: var(--sc-ink-soft); }
+
+/* ======================================================== act 4 · anatomy */
+
+.anat { margin-top: 24px; position: relative; }
+.anat__sentence {
+  font-family: var(--sc-font-display); font-weight: 500;
+  font-size: clamp(1rem, 2.1vw, 1.3rem); line-height: 1.5; letter-spacing: -0.014em;
+  max-width: 34ch;
+}
+.anat__cite {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.45em; height: 1.45em; padding: 0 0.3em; margin-left: 0.18em;
+  border: 1px solid var(--sc-accent); border-radius: 4px;
+  font-family: var(--sc-font-mono); font-size: 0.62em; font-weight: 500;
+  color: var(--k-accent-text); vertical-align: 0.18em; font-variant-numeric: tabular-nums;
+}
+.anat__grid { display: grid; grid-template-columns: minmax(0, 1fr) 54px minmax(0, 340px); gap: 0; align-items: center; margin-top: 26px; }
+@media (max-width: 880px) { .anat__grid { grid-template-columns: 1fr; gap: 14px; } .anat__link { display: none; } }
+.anat__link { height: 100%; min-height: 70px; }
+.anat__link svg { width: 100%; height: 100%; overflow: visible; }
+.anat__link path { stroke: var(--sc-accent); stroke-width: 1; fill: none; stroke-dasharray: 1 1; }
+
+.ev { background: var(--k-inset); border: 1px solid var(--k-line); border-radius: 6px; padding: 12px 13px; }
+.ev__hd { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+.ev__pg { font-family: var(--sc-font-mono); font-size: 11px; color: var(--k-accent-text); }
+.ev__sc { font-family: var(--sc-font-mono); font-size: 11px; color: var(--sc-ink-soft); font-variant-numeric: tabular-nums; }
+.ev__q { font-family: var(--sc-font-mono); font-size: 12px; line-height: 1.65; color: var(--sc-ink); }
+
+/* ========================================================== act 5 · gate */
+
+.gate__intro { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.gate__intro p { font-size: 13.5px; color: var(--sc-ink-soft); line-height: 1.6; }
+
+.gate { display: grid; grid-template-columns: minmax(0, 440px) minmax(0, 1fr); gap: 16px; align-items: stretch; min-height: min(58vh, 520px); }
+@media (max-width: 960px) { .gate { grid-template-columns: 1fr; gap: 12px; min-height: 0; } }
+
+.rail { position: relative; padding: 10px 12px 12px; }
+.rail__rows { position: relative; display: flex; flex-direction: column; gap: 1px; padding-right: 66px; }
+
+.row {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) 46px; gap: 9px; align-items: center;
+  padding: 5px 0;
+  transition: opacity 220ms var(--sc-ease-out);
+}
+.row__pg { font-family: var(--sc-font-mono); font-size: 10.5px; color: var(--sc-ink-soft); font-variant-numeric: tabular-nums; }
+.row__bar { position: relative; height: 9px; background: var(--k-inset); border: 1px solid var(--k-line); border-radius: 2px; overflow: hidden; }
+.row__fill {
+  position: absolute; inset: 0 auto 0 0; width: calc(var(--k-w) * 100%);
+  background: var(--sc-accent);
+  transform-origin: 0 50%;
+  transition: background-color 220ms var(--sc-ease-out), opacity 220ms var(--sc-ease-out);
+}
+.row__sc { font-family: var(--sc-font-mono); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; color: var(--sc-ink); }
+
+.row.is-cut { opacity: 0.8; }
+.row.is-cut .row__fill { background: var(--k-line-up); }
+.row.is-cut .row__pg,
+.row.is-cut .row__sc { color: #6A6A64; }
+
+/* the gate itself */
+.gate-line {
+  position: absolute; left: -12px; right: 0;
+  top: calc(var(--k-y) * 100%);
+  height: 0;
+  cursor: grab;
+  touch-action: none;
+  z-index: 4;
+}
+.gate-line:active { cursor: grabbing; }
+.gate-line::before {
+  content: ""; position: absolute; inset: -14px 0; /* 28px tall hit area */
+}
+.gate-line__ink {
+  position: absolute; left: 0; right: 62px; top: -1px; height: 2px;
+  background: var(--sc-accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--sc-canvas) 70%, transparent);
+}
+.gate-line__ink::after {
+  content: ""; position: absolute; inset: 0;
+  background: repeating-linear-gradient(90deg, transparent 0 5px, var(--sc-canvas) 5px 8px);
+  opacity: 0.55;
+}
+.gate-line__grip {
+  position: absolute; right: 0; top: 50%; transform: translate(0, -50%);
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 7px;
+  background: var(--sc-accent); color: var(--sc-accent-ink);
+  border-radius: 3px;
+  font-family: var(--sc-font-mono); font-size: 10.5px; font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.gate-line__grip svg { width: 9px; height: 9px; }
+.gate-line:focus-visible { outline: none; }
+.gate-line:focus-visible .gate-line__grip { outline: 2px solid var(--sc-ink); outline-offset: 2px; }
+
+.hint {
+  display: flex; align-items: center; gap: 7px; margin-top: 11px;
+  font-family: var(--sc-font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--sc-ink-soft);
+  transition: opacity 300ms var(--sc-ease-out);
+}
+.hint svg { width: 12px; height: 12px; }
+.hint.is-done { opacity: 0.32; }
+
+/* the answer that recomputes */
+.ans { display: flex; flex-direction: column; }
+.ans__bd { padding: 14px 15px 16px; display: flex; flex-direction: column; gap: 0; flex: 1 1 auto; }
+.ans__s {
+  font-size: 15px; line-height: 1.68; text-wrap: pretty;
+  padding-block: 5px;
+  transition: opacity 260ms var(--sc-ease-out);
+}
+.ans__s[hidden] { display: none; }
+.ans__cite {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.5em; height: 1.5em; padding: 0 0.32em; margin-left: 0.22em;
+  border: 1px solid var(--sc-accent); border-radius: 4px;
+  font-family: var(--sc-font-mono); font-size: 0.66em; font-weight: 500;
+  color: var(--k-accent-text); vertical-align: 0.14em; font-variant-numeric: tabular-nums;
+}
+.ans__note {
+  margin-top: 12px; padding-top: 11px; border-top: 1px solid var(--k-line);
+  font-family: var(--sc-font-mono); font-size: 10.5px; line-height: 1.6; color: var(--sc-ink-soft);
+}
+.ans__note b { color: var(--k-accent-text); font-weight: 500; }
+
+/* the authored silence at the head of the act: the rail is a ground, present
+   but unlit, and the answer panel holds one line. BRIEF.md declares it. */
+.ans__wait { display: none; font-size: 13.5px; line-height: 1.64; color: var(--sc-ink-soft); }
+.gate-stage.is-waiting .ans__wait { display: block; }
+.gate-stage.is-waiting #ans-sentences,
+.gate-stage.is-waiting .ans__note { display: none; }
+.gate-stage.is-waiting .row { opacity: 0.3; }
+.gate-stage.is-waiting .gate-line { opacity: 0; pointer-events: none; }
+.gate-stage.is-waiting .hint { opacity: 0; }
+.gate-line, .hint, .row { transition: opacity 300ms var(--sc-ease-out); }
+
+/* the refusal. the accent leaves the page. */
+.ans__refuse { display: none; flex-direction: column; justify-content: center; flex: 1 1 auto; padding: 8px 2px; }
+.ans__refuse h3 { font-family: var(--sc-font-display); font-weight: 600; font-size: clamp(1.2rem, 2.6vw, 1.7rem); letter-spacing: -0.022em; line-height: 1.2; }
+.ans__refuse p { margin-top: 10px; font-size: 13.5px; line-height: 1.64; color: var(--sc-ink-soft); max-width: 42ch; text-wrap: pretty; }
+
+.gate-stage.is-refusing { --sc-accent: #8C8C86; }
+.gate-stage.is-refusing .ans { color: var(--sc-ink); }
+.gate-stage.is-refusing .ans__bd { display: none; }
+.gate-stage.is-refusing .ans__refuse { display: flex; }
+.gate-stage.is-refusing .row__fill { background: var(--k-line-up); }
+.gate-stage.is-refusing .chunk__pg { color: var(--sc-ink-soft); }
+
+/* ============================================================ act 6 · ask */
+
+.ask { max-width: 640px; }
+.ask__form { display: flex; align-items: center; gap: 0; border: 1px solid var(--k-line-up); border-radius: 7px; background: var(--sc-surface); overflow: hidden; margin-top: 18px; }
+.ask__form:focus-within { border-color: var(--k-accent-text); box-shadow: 0 0 0 3px color-mix(in oklab, var(--sc-accent) 16%, transparent); }
+.ask__caret { padding-left: 13px; color: var(--k-accent-text); font-family: var(--sc-font-mono); font-size: 13px; }
+.ask__input {
+  flex: 1 1 auto; min-width: 0;
+  background: transparent; border: 0; outline: none;
+  color: var(--sc-ink);
+  font-family: var(--sc-font-text); font-size: 15px;
+  padding: 13px 12px;
+}
+.ask__input::placeholder { color: #6A6A64; }
+.ask__go {
+  flex: 0 0 auto; align-self: stretch;
+  background: var(--sc-accent); color: var(--sc-accent-ink);
+  border: 0; padding: 0 16px;
+  font-family: var(--sc-font-text); font-weight: 600; font-size: 13.5px;
+  cursor: pointer;
+  transition: filter 140ms var(--sc-ease-out), transform 110ms var(--sc-ease-out);
+}
+.ask__go:hover { filter: brightness(1.08); }
+.ask__go:active { transform: translateY(1px); }
+
+.res { margin-top: 14px; display: flex; flex-direction: column; gap: 1px; min-height: 112px; }
+.res__rest { padding: 12px 2px; font-size: 12.5px; line-height: 1.6; color: var(--sc-ink-soft); max-width: 48ch; }
+.res__row { display: grid; grid-template-columns: 42px minmax(0, 1fr) 46px; gap: 10px; align-items: start; padding: 9px 2px; border-bottom: 1px solid var(--k-line); }
+.res__pg { font-family: var(--sc-font-mono); font-size: 11px; color: var(--k-accent-text); font-variant-numeric: tabular-nums; }
+.res__t { font-size: 12.5px; line-height: 1.58; color: var(--sc-ink); }
+.res__sc { font-family: var(--sc-font-mono); font-size: 11px; color: var(--sc-ink-soft); text-align: right; font-variant-numeric: tabular-nums; }
+.res__none { padding: 14px 2px; }
+.res__none strong { display: block; font-family: var(--sc-font-display); font-weight: 600; font-size: 1.05rem; letter-spacing: -0.015em; }
+.res__none span { display: block; margin-top: 6px; font-size: 12.5px; color: var(--sc-ink-soft); line-height: 1.6; }
+
+.ask__foot { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--k-line); display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 22px; }
+.ask__cta {
+  font-family: var(--sc-font-text); font-weight: 600; font-size: 14px;
+  color: var(--k-accent-text); text-decoration: none;
+  border-bottom: 1px solid currentColor; padding-bottom: 2px;
+}
+.ask__cta:hover { color: var(--sc-ink); }
+.ask__small { font-family: var(--sc-font-mono); font-size: 10.5px; color: var(--sc-ink-soft); line-height: 1.7; }
+
+.k-sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+
+/* ------------------------------------------------------------- phone --
+   A pinned stage is exactly one viewport, so everything in it has to fit in
+   one. On a phone that means tighter rows, no desktop-only enrichment, and
+   children that refuse to be flex-shrunk below their own content. */
+@media (max-width: 760px) {
+  .k-stage {
+    padding-block: clamp(1.25rem, 3vh, 3rem);
+    padding-bottom: calc(clamp(1.25rem, 3vh, 3rem) + var(--k-bar));
+  }
+  .k-stage > * { flex: 0 0 auto; }
+
+  .log { display: none; }
+  .src__row { padding: 7px 4px; }
+  .src__name { font-size: 12px; }
+  .tele__row { padding: 5px 2px; }
+  .tele__v { font-size: 14px; }
+
+  .gate__intro { gap: 8px; margin-bottom: 10px; }
+  .gate__intro p { font-size: 12.5px; line-height: 1.55; }
+
+  .rail { padding: 8px 10px 10px; }
+  .rail__rows { padding-right: 58px; }
+  .row { padding: 2px 0; grid-template-columns: 36px minmax(0, 1fr) 42px; gap: 7px; }
+  .row__bar { height: 7px; }
+  .row__pg, .row__sc { font-size: 10px; }
+  .gate-line__grip { font-size: 10px; padding: 3px 6px; gap: 4px; }
+  .hint { display: none; }
+
+  /* The rail is fixed; the answer takes whatever height is left and scrolls
+     inside its own panel. A widening answer must not push the page open:
+     a pinned stage has exactly one viewport and no more. */
+  .gate { display: flex; flex-direction: column; }
+  /* the gate is the one stage child that must take the leftover height
+     rather than its content height, so the answer has something to bound it */
+  #threshold .k-stage > .gate { flex: 1 1 auto; min-height: 0; }
+  .rail { flex: 0 0 auto; }
+  .ans { flex: 1 1 auto; min-height: 7rem; }
+  .ans__bd { min-height: 0; }
+  .ans__bd {
+    padding: 11px 12px 12px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+  }
+  .ans__s { font-size: 14px; line-height: 1.58; padding-block: 3px; }
+  .ans__note { margin-top: 9px; padding-top: 9px; font-size: 10px; }
+  .ans__refuse h3 { font-size: 1.35rem; }
+  .ans__refuse p { font-size: 13px; }
+
+  .strip__lead { flex-basis: min(82vw, 300px); }
+  .chunk { min-height: min(40vh, 330px); }
+}
+
+
+/* ---------------------------------------------------------------- live --
+   States that only exist when the page is talking to the API. */
+.rd-api b::before {
+  content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: var(--k-line-up); margin-right: 6px; vertical-align: 1px;
+}
+.rd-api.is-live b::before { background: var(--sc-accent); box-shadow: 0 1px 3px -1px var(--sc-accent); }
+@media (max-width: 480px) { .bar__read .rd-chunks { display: none; } }
+
+.src__empty { padding: 6px 2px; font-size: 12px; line-height: 1.55; color: var(--sc-ink-soft); }
+
+.ask__form.is-busy .ask__go { background: var(--k-line-up); color: var(--sc-ink); }
+.ask__status {
+  margin-top: 10px; min-height: 1.7em;
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--sc-font-mono); font-size: 10.5px; line-height: 1.6; color: var(--sc-ink-soft);
+}
+.ask__status:empty { min-height: 0; margin-top: 0; }
+.ask__status.is-busy::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto;
+  background: var(--sc-accent); animation: k-pulse 1s var(--sc-ease-out) infinite alternate;
+}
+@keyframes k-pulse { from { opacity: 0.25; } to { opacity: 1; } }
+
+.live__ans {
+  padding: 12px 2px 16px; border-bottom: 1px solid var(--k-line-up);
+  font-size: 15px; line-height: 1.68; color: var(--sc-ink); text-wrap: pretty;
+}
+.live__ans:empty { display: none; }
+.live__ans p + p, .live__ans p + ul, .live__ans p + ol, .live__ans ul + p, .live__ans ol + p { margin-top: 0.7em; }
+.live__ans ul, .live__ans ol { padding-left: 1.25em; }
+.live__ans li + li { margin-top: 0.3em; }
+.live__ans strong { font-weight: 600; }
+.live__ans a.ans__cite { text-decoration: none; color: inherit; }
+.live__ans a.ans__cite:hover { background: var(--sc-accent); color: var(--sc-accent-ink); }
+.live__ans.is-streaming > :last-child::after {
+  content: ""; display: inline-block; width: 0.5em; height: 1.05em; margin-left: 2px;
+  vertical-align: -0.16em; background: var(--sc-accent);
+  animation: k-pulse 0.55s steps(2, jump-none) infinite alternate;
+}
+.live__src { display: flex; flex-direction: column; gap: 1px; }
+.res__row--cite { grid-template-columns: 18px 42px minmax(0, 1fr) 46px; transition: background-color 140ms var(--sc-ease-out); }
+.res__row--cite.is-hot { background: color-mix(in oklab, var(--sc-accent) 7%, transparent); }
+.res__n { font-family: var(--sc-font-mono); font-size: 11px; color: var(--sc-ink-soft); font-variant-numeric: tabular-nums; }
+a.res__pg { text-decoration: none; border-bottom: 1px dotted currentColor; align-self: start; justify-self: start; }
+a.res__pg:hover { color: var(--sc-ink); }
+.res__doc { font-family: var(--sc-font-mono); font-size: 10.5px; color: var(--sc-ink-soft); margin-bottom: 3px; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .res__row--cite { row-gap: 4px; }
+  .res__row--cite > div { grid-column: 2 / -1; grid-row: 2; }
+  .live__ans { font-size: 14.5px; }
+}
+
+.ask__up {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 6px 11px; border: 1px dashed var(--k-line-up); border-radius: 5px;
+  font-family: var(--sc-font-mono); font-size: 11px; color: var(--sc-ink-soft);
+  transition: color 140ms var(--sc-ease-out), border-color 140ms var(--sc-ease-out);
+}
+.ask__up[hidden] { display: none; }
+.ask__up svg { width: 13px; height: 13px; }
+.ask__up:hover, .ask__up:focus-within { color: var(--sc-ink); border-color: var(--k-accent-text); }
+.ask__up.is-busy { opacity: 0.55; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .ask__status.is-busy::before, .live__ans.is-streaming > :last-child::after { animation: none; }
+}
+
+/* ------------------------------------------------------- reduced motion -- */
+@media (prefers-reduced-motion: reduce) {
+  .chunk { opacity: 1; transform: none; }
+}
+
+/* ===========================================================================
+   Brutalist layer (knowlyai-redacted)
+   Paper, 3px black rules, square corners, hard offset shadows, condensed
+   900-weight display type. Orange is a fill under black text, never a glow.
+   The structure above is untouched; this only re-dresses it.
+   ======================================================================== */
+.sc-grain { display: none; }
+::selection { background: var(--sc-accent); color: var(--sc-ink); }
+:focus-visible { outline: 3px solid var(--sc-accent); outline-offset: 2px; }
+
+.k-label { color: var(--sc-ink); font-weight: 600; font-size: 10.5px; }
+.k-dot { width: 8px; height: 8px; border-radius: 0; }
+.k-dot--idle { background: #8F8F88; }
+
+.k-panel {
+  border: 3px solid var(--sc-ink); border-radius: 0;
+  box-shadow: 6px 6px 0 var(--sc-ink);
+  background: var(--sc-surface);
+}
+.k-panel__hd { background: var(--sc-ink); border-bottom: 3px solid var(--sc-ink); }
+.k-panel__hd .k-label { color: var(--sc-canvas); }
+
+/* chrome: the status bar goes black and loud */
+.bar { background: var(--sc-ink); border-top: 3px solid var(--sc-ink); backdrop-filter: none; color: var(--sc-canvas); }
+.bar__mark { text-decoration: none; color: var(--sc-canvas); border-right-color: #7A3A57; }
+.bar__name { font-stretch: 125%; font-weight: 900; font-size: 15px; letter-spacing: -0.01em; }
+.bar__name b { color: var(--sc-accent); font-weight: 900; }
+.bar__mark:hover .bar__name { color: var(--sc-accent); }
+.bar__seg { color: #BDBDB6; border-right-color: #7A3A57; font-weight: 600; }
+.bar__seg:hover { color: var(--sc-canvas); }
+.bar__seg[aria-current="true"] { color: var(--sc-ink); background: var(--sc-accent); }
+.bar__seg[aria-current="true"]::after { display: none; }
+.bar__read { color: #BDBDB6; border-left-color: #7A3A57; }
+.bar__read b { color: var(--sc-canvas); }
+.bar__read .is-warn { color: var(--sc-accent); }
+.rd-api b::before { background: #6A6A64; border-radius: 0; }
+
+/* act 1: the question is the loudest thing on the surface */
+.grid-bed { background-image: linear-gradient(to right, #56153014 1px, transparent 1px); opacity: 1; }
+.q { border-bottom: 3px solid var(--sc-ink); padding: 16px 16px 15px; }
+.q__caret { color: var(--sc-ink); background: var(--sc-accent); font-weight: 700; padding: 0 6px; align-self: flex-start; margin-top: 0.35em; }
+.q__text {
+  font-stretch: 62%; font-weight: 900; text-transform: uppercase;
+  font-size: clamp(1.7rem, 4.3vw, 4rem); line-height: 0.9; letter-spacing: -0.03em;
+}
+.empty__line { color: var(--sc-ink); }
+.src__row, .tele__row, .log__row { border-bottom: 2px solid var(--sc-ink); }
+.src__ico { color: var(--sc-ink); }
+.src__meta, .tele__k { color: var(--sc-ink-soft); }
+.tele__v { font-weight: 700; font-size: 18px; }
+.log__ok { color: var(--sc-ink); background: var(--sc-accent); padding: 0 3px; font-weight: 700; }
+.log__msg { font-weight: 500; }
+
+/* act 2: the unsourced answer, stickered */
+.warn-strip { border: 3px solid var(--sc-ink); border-radius: 0; background: var(--sc-accent); color: var(--sc-ink); font-weight: 700; }
+.warn-strip svg { color: var(--sc-ink); }
+.claim { border-left: 3px solid var(--sc-ink); padding-left: 22px; }
+.claim::after { width: 3px; left: -3px; background: var(--sc-accent); }
+.claim__t { font-weight: 600; font-size: clamp(16px, 1.5vw, 21px); line-height: 1.4; }
+.claim__flag { color: var(--sc-canvas); background: var(--sc-ink); padding: 3px 8px; font-weight: 700; }
+.claim__flag::before { display: none; }
+.verdict { font-stretch: 70%; font-weight: 900; text-transform: uppercase; font-size: clamp(1.9rem, 4.2vw, 3.6rem); line-height: 0.92; letter-spacing: -0.025em; }
+.verdict em { color: var(--sc-ink); background: var(--sc-accent); padding: 0 0.06em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.verdict + p { color: var(--sc-ink); font-size: 15px; }
+
+/* act 3: the passages rail */
+.strip__lead h2 { font-stretch: 70%; font-weight: 900; text-transform: uppercase; font-size: clamp(1.7rem, 3.4vw, 2.8rem); line-height: 0.94; letter-spacing: -0.025em; }
+.strip__lead p, .strip__note p { color: var(--sc-ink); }
+.chunk { border: 3px solid var(--sc-ink); border-radius: 0; box-shadow: 6px 6px 0 var(--sc-ink); }
+.chunk__hd { border-bottom: 3px solid var(--sc-ink); }
+.chunk__pg { color: var(--sc-ink); background: var(--sc-accent); padding: 1px 5px; font-weight: 700; }
+.chunk__t { font-size: 13.5px; font-weight: 500; }
+.chunk__ft { border-top: 2px solid var(--sc-ink); }
+
+/* act 4: one sentence, dissected */
+.anat__sentence { font-stretch: 70%; font-weight: 900; text-transform: uppercase; font-size: clamp(1.6rem, 3.6vw, 3rem); line-height: 0.95; letter-spacing: -0.025em; max-width: 22ch; }
+.anat__cite, .ans__cite { border: 2px solid var(--sc-ink); border-radius: 0; background: var(--sc-accent); color: var(--sc-ink); font-weight: 700; }
+.anat__link path { stroke: var(--sc-ink); stroke-width: 2; stroke-dasharray: none; }
+.ev { background: var(--sc-canvas); border: 3px solid var(--sc-ink); border-radius: 0; box-shadow: 6px 6px 0 var(--sc-accent); }
+.ev__pg { color: var(--sc-ink); background: var(--sc-accent); padding: 0 5px; font-weight: 700; }
+.ev__q { font-weight: 500; }
+
+/* act 5: the gate */
+.gate__intro p { color: var(--sc-ink); font-weight: 500; }
+.row__pg { color: var(--sc-ink); font-weight: 600; }
+.row__bar { height: 12px; border: 2px solid var(--sc-ink); border-radius: 0; background: var(--sc-canvas); }
+.row__sc { font-weight: 600; }
+.row.is-cut { opacity: 1; }
+.row.is-cut .row__fill { background: repeating-linear-gradient(-45deg, #561530 0 2px, transparent 2px 6px); }
+.gate-line__ink { height: 4px; top: -2px; background: var(--sc-ink); box-shadow: none; }
+.gate-line__ink::after { background: repeating-linear-gradient(90deg, transparent 0 8px, var(--sc-accent) 8px 14px); opacity: 1; }
+.gate-line__grip { background: var(--sc-ink); color: var(--sc-canvas); border-radius: 0; box-shadow: 3px 3px 0 var(--sc-accent); }
+.hint { color: var(--sc-ink); font-weight: 600; }
+.ans__s { font-size: clamp(15px, 1.25vw, 18px); font-weight: 500; }
+.ans__note { border-top: 2px solid var(--sc-ink); color: var(--sc-ink); }
+.ans__note b { color: var(--sc-ink); background: var(--sc-accent); padding: 0 4px; font-weight: 700; }
+.ans__wait { color: var(--sc-ink); }
+.ans__refuse h3 { font-stretch: 62%; font-weight: 900; text-transform: uppercase; font-size: clamp(2.2rem, 5.4vw, 4.6rem); line-height: 0.88; letter-spacing: -0.03em; }
+.ans__refuse p { color: var(--sc-ink); }
+/* the refusal: the orange leaves the page, exactly as before */
+.gate-stage.is-refusing { --sc-accent: #8C8C86; --k-accent-text: #5E4452; }
+.gate-stage.is-refusing .k-panel { box-shadow: 6px 6px 0 #8C8C86; }
+
+/* act 6: the field */
+#ask-head { font-stretch: 62% !important; font-weight: 900 !important; text-transform: uppercase; font-size: clamp(2.1rem, 5.6vw, 4.8rem) !important; line-height: 0.88 !important; letter-spacing: -0.03em !important; }
+.ask { max-width: 760px; }
+.ask__form { border: 3px solid var(--sc-ink); border-radius: 0; box-shadow: 6px 6px 0 var(--sc-ink); }
+.ask__form:focus-within { border-color: var(--sc-ink); box-shadow: 6px 6px 0 var(--sc-accent); }
+.ask__caret { color: var(--sc-ink); font-weight: 700; }
+.ask__input { font-weight: 500; font-size: 17px; padding-block: 16px; }
+.ask__input::placeholder { color: #6A6A64; }
+.ask__go { background: var(--sc-ink); color: var(--sc-canvas); font-weight: 800; font-stretch: 112%; text-transform: uppercase; letter-spacing: 0.04em; padding: 0 22px; }
+.ask__go:hover { filter: none; background: var(--sc-accent); color: var(--sc-ink); }
+.ask__form.is-busy .ask__go { background: var(--sc-accent); color: var(--sc-ink); }
+.ask__status { color: var(--sc-ink); font-weight: 500; }
+.ask__status.is-busy::before { border-radius: 0; }
+.res__row { border-bottom: 2px solid var(--sc-ink); }
+.res__pg { color: var(--sc-ink) !important; background: var(--sc-accent); padding: 0 4px; font-weight: 700; }
+a.res__pg { border-bottom: 0; text-decoration: underline; text-underline-offset: 2px; }
+.res__t { color: var(--sc-ink); }
+.res__sc, .res__n, .res__doc { color: var(--sc-ink-soft); }
+.res__none strong { font-stretch: 70%; font-weight: 900; text-transform: uppercase; font-size: clamp(1.6rem, 3.4vw, 2.6rem); line-height: 0.92; }
+.res__none span { color: var(--sc-ink); }
+.res__row--cite.is-hot { background: color-mix(in oklab, var(--sc-accent) 22%, transparent); }
+.live__ans { border-bottom: 3px solid var(--sc-ink); font-weight: 500; font-size: 16.5px; }
+.live__ans strong { font-weight: 800; }
+.ask__foot { border-top: 3px solid var(--sc-ink); }
+.ask__cta { color: var(--sc-ink); background: var(--sc-accent); border: 3px solid var(--sc-ink); padding: 8px 14px; box-shadow: 4px 4px 0 var(--sc-ink); text-transform: uppercase; font-weight: 800; font-stretch: 112%; }
+.ask__cta:hover { color: var(--sc-canvas); background: var(--sc-ink); }
+.ask__small { color: var(--sc-ink-soft); }
+.ask__up { border: 3px dashed var(--sc-ink); border-radius: 0; color: var(--sc-ink); font-weight: 700; }
+.ask__up:hover, .ask__up:focus-within { border-style: solid; background: var(--sc-accent); }
+
+@media (max-width: 760px) {
+  .k-panel { box-shadow: 4px 4px 0 var(--sc-ink); }
+  .q__text { font-size: clamp(1.6rem, 8.4vw, 2.4rem); }
+  .tele__v { font-size: 15px; }
+  .ans__refuse h3 { font-size: 2.1rem; }
+}
+</style>
+</head>
+<body>
+
+<span data-sc-progress></span>
+<div class="sc-grain" aria-hidden="true"></div>
+
+<main id="top">
+
+  <!-- ============================================ 1 · RECOGNITION · pin -->
+  <!-- The surface is already in a state. No title card, no claim over media:
+       the console IS the hero, and it is the ground of this act, so the first
+       screen is never empty. -->
+  <section id="index" data-sc-act="pin" data-sc-span="1.8" data-sc-drift="#F0F0EC">
+    <div data-sc-stage>
+      <div class="k-stage k-wrap k-stage--bed">
+        <div class="grid-bed" data-sc-parallax="-0.5" aria-hidden="true"></div>
+        <div class="console">
+
+          <aside class="k-panel console__src" data-sc-parallax="0.26">
+            <div class="k-panel__hd">
+              <span class="k-dot" aria-hidden="true"></span>
+              <span class="k-label">Sources</span>
+              <span class="k-label" style="margin-left:auto" id="src-count">2 indexed</span>
+            </div>
+            <div class="k-panel__bd">
+              <div class="src" id="src-list"></div>
+            </div>
+          </aside>
+
+          <section class="k-panel console__q">
+            <div class="q">
+              <span class="q__caret" aria-hidden="true">&gt;</span>
+              <h1 class="q__text">Why does a model do well in training and badly on new data?</h1>
+            </div>
+            <div class="empty">
+              <p class="empty__line">
+                <b>Nothing has been answered yet.</b> When it is, every sentence will
+                carry the page it came from, and you will be able to open that page
+                and read it yourself. That is the whole product.
+              </p>
+            </div>
+          </section>
+
+          <aside class="k-panel console__tele" data-sc-parallax="-0.26">
+            <div class="k-panel__hd">
+              <span class="k-dot" aria-hidden="true"></span>
+              <span class="k-label">Index</span>
+            </div>
+            <div class="k-panel__bd">
+              <div class="tele">
+                <div class="tele__row"><span class="tele__k">Documents</span><span class="tele__v" data-k-count="documents">0</span></div>
+                <div class="tele__row"><span class="tele__k">Passages</span><span class="tele__v" data-k-count="passages">0</span></div>
+                <div class="tele__row"><span class="tele__k">Characters</span><span class="tele__v" data-k-count="third">0</span></div>
+                <div class="tele__row"><span class="tele__k">Top-k</span><span class="tele__v" data-k-count="topk">0</span></div>
+              </div>
+            </div>
+          </aside>
+
+        </div>
+
+        <div class="k-panel log">
+          <div class="k-panel__hd">
+            <span class="k-dot" aria-hidden="true"></span>
+            <span class="k-label">Activity</span>
+            <span class="k-label" style="margin-left:auto" id="log-src">sample</span>
+          </div>
+          <div class="k-panel__bd log__bd" id="log"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ 2 · DOUBT · flow + in -->
+  <!-- The only act that reads like a document, which is why it belongs here:
+       after a pinned opener, prose lands harder. Reduced top padding because a
+       pinned stage needs a viewport to clear. -->
+  <section id="unsourced" class="sec sec--tight" data-sc-act="flow" style="padding-top:clamp(1rem,3vh,2rem)">
+    <div class="k-wrap" data-sc-in data-sc-stagger="70">
+
+      <p class="warn-strip">
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.6 14.4 13.4H1.6L8 2.6Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.6v3M8 11.6v.01" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        Demonstration: the same question, answered with no documents behind it
+      </p>
+
+      <div class="unsourced">
+        <div>
+          <div class="claim">
+            <p class="claim__t">Overfitting happens when a model memorises its training data, a problem that affects roughly 40% of models that reach production.</p>
+            <span class="claim__flag">No source</span>
+          </div>
+          <div class="claim">
+            <p class="claim__t">The standard remedy is dropout at 0.5 combined with early stopping after three stagnant epochs.</p>
+            <span class="claim__flag">Not in your documents</span>
+          </div>
+          <div class="claim">
+            <p class="claim__t">Most practitioners agree this is the single largest cause of deployment failure.</p>
+            <span class="claim__flag">Unattributable</span>
+          </div>
+        </div>
+
+        <div>
+          <p class="verdict">Every line above is plausible. <em>Not one of them is checkable.</em></p>
+          <p>Two are inventions. One is advice your document never gives. A model with no retrieval behind it cannot tell you which is which, and neither can you.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ========================================== 3 · CURIOSITY · pan -->
+  <!-- Lateral travel reads as breadth: there are a lot of these, and each one
+       is addressable. -->
+  <section id="passages" data-sc-act="pan" data-sc-span="3.0">
+    <div data-sc-stage>
+      <div class="k-stage" style="justify-content:center">
+        <div class="strip" id="strip" data-sc-pan="0.05">
+          <div class="strip__lead">
+            <span class="k-label">Step one</span>
+            <h2>A document is not a thing you search. It is a few hundred passages that can each be pointed at.</h2>
+            <p>Split on paragraph boundaries, kept slightly overlapping so a sentence is never cut in half, and tagged with the page it came off.</p>
+          </div>
+          <!-- chunk cards injected from the corpus array -->
+          <div class="strip__note">
+            <p>Shown here: the sample index this page carries. The product builds the same structure from whatever you upload, locally, on your own machine.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================ 4 · CLARITY · reveal -->
+  <!-- Deliberately the flattest act on the page. One sentence, dissected. It
+       exists so the peak has something plain to arrive from. -->
+  <section id="retrieval" class="sec sec--tight" data-sc-act="flow">
+    <div class="k-wrap" data-sc-in data-sc-stagger="60">
+      <span class="k-label">Step two</span>
+      <div class="anat">
+        <p class="anat__sentence">
+          A sentence in the answer is not a sentence the model wrote on its own.
+        </p>
+
+        <div class="anat__grid">
+          <div data-sc-reveal="left" data-sc-reveal-at="0.08 0.46">
+            <div class="k-panel">
+              <div class="k-panel__hd"><span class="k-dot"></span><span class="k-label">Answer, sentence 1</span></div>
+              <div class="k-panel__bd">
+                <p style="font-size:14.5px;line-height:1.66">A model with enough capacity can fit its training set exactly, noise included, which is the canonical symptom of overfitting.<span class="anat__cite">1</span></p>
+              </div>
+            </div>
+          </div>
+
+          <div class="anat__link" aria-hidden="true" data-sc-reveal="left" data-sc-reveal-at="0.22 0.5">
+            <svg viewBox="0 0 54 70" preserveAspectRatio="none">
+              <path d="M0 35 H22 Q27 35 27 29 V12 Q27 6 32 6 H54"/>
+              <path d="M0 35 H22 Q27 35 27 41 V58 Q27 64 32 64 H54"/>
+            </svg>
+          </div>
+
+          <div data-sc-reveal="left" data-sc-reveal-at="0.3 0.62">
+            <div class="ev">
+              <div class="ev__hd"><span class="ev__pg">machine_learning.pdf &middot; p.41</span><span class="ev__sc">0.871</span></div>
+              <p class="ev__q">A model with sufficient capacity can interpolate its training set exactly while failing on held-out data. This is the canonical symptom of overfitting.</p>
+            </div>
+          </div>
+        </div>
+
+        <p style="margin-top:22px;font-size:13.5px;line-height:1.64;color:var(--sc-ink-soft);max-width:54ch">
+          It is a passage that was retrieved first, then written up. Pull the passage out
+          and the sentence has nothing to stand on, which is exactly what happens next.
+        </p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================== 5 · TRUST · pin + drag · PEAK -->
+  <!-- The largest span on the page. The first fifth is intentionally near
+       empty: the rail is an unlit ground and the answer panel holds one line.
+       That silence is authored, and BRIEF.md says so. -->
+  <section id="threshold" data-sc-act="pin" data-sc-span="4.6" data-sc-drift="#E2E2DB">
+    <div data-sc-stage>
+      <div class="k-stage k-wrap">
+
+        <div class="gate__intro" data-sc-cue="0.08 1 0.2 0.02">
+          <span class="k-label">Step three</span>
+          <p>
+            Every retrieved passage has a similarity score. Something has to decide how
+            much similarity counts as evidence. Take hold of that line.
+          </p>
+        </div>
+
+        <div class="gate gate-stage" id="gate-stage">
+
+          <div class="k-panel rail">
+            <div class="k-panel__hd" style="margin:-10px -12px 10px;padding:9px 12px">
+              <span class="k-dot" aria-hidden="true"></span>
+              <span class="k-label">Ranked passages</span>
+              <span class="k-label" style="margin-left:auto"><span id="pass-count">0</span> above the line</span>
+            </div>
+
+            <div class="rail__rows" id="rail-rows">
+              <!-- rows injected; the gate line is positioned over them -->
+              <div class="gate-line" id="gate-line"
+                   role="slider"
+                   tabindex="0"
+                   aria-label="Evidence threshold"
+                   aria-valuemin="0.25" aria-valuemax="0.95" aria-valuenow="0.70"
+                   aria-valuetext="0.700, four passages above the line">
+                <span class="gate-line__ink" aria-hidden="true"></span>
+                <span class="gate-line__grip" aria-hidden="true">
+                  <svg viewBox="0 0 12 12" fill="none"><path d="M2 4.5 6 1l4 3.5M2 7.5 6 11l4-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  <span id="gate-val">0.700</span>
+                </span>
+              </div>
+            </div>
+
+            <p class="hint" id="gate-hint">
+              <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M4.5 6.5 8 3l3.5 3.5M4.5 9.5 8 13l3.5-3.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              Drag the line, or use the arrow keys
+            </p>
+          </div>
+
+          <div class="k-panel ans">
+            <div class="k-panel__hd">
+              <span class="k-dot" id="ans-dot" aria-hidden="true"></span>
+              <span class="k-label">Answer</span>
+              <span class="k-label" style="margin-left:auto" id="ans-state">grounded</span>
+            </div>
+
+            <div class="ans__bd" id="ans-body">
+              <p class="ans__wait">No threshold set. Nothing is being claimed yet.</p>
+              <div id="ans-sentences"></div>
+              <p class="ans__note" id="ans-note"></p>
+            </div>
+
+            <div class="ans__refuse" style="padding-inline:15px">
+              <h3>Not in these documents.</h3>
+              <p>Nothing you have indexed clears the bar you just set. KnowlyAI will not
+                write around that, and it will not soften it into a maybe. An answer it
+                cannot point at is an answer it does not give.</p>
+              <p style="margin-top:14px;color:var(--sc-ink)">This is the feature.</p>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================== 6 · READINESS · flow -->
+  <!-- The close is a field with a cursor in it, not a button island: a page
+       that spent its length being a tool should end by being used. -->
+  <section id="ask" class="sec" data-sc-act="flow" style="padding-top:clamp(1.5rem,4vh,3rem)">
+    <div class="k-wrap" data-sc-in data-sc-stagger="70">
+      <div class="ask">
+        <span class="k-label">Your turn</span>
+        <p id="ask-head" style="font-family:var(--sc-font-display);font-weight:600;font-size:clamp(1.2rem,2.6vw,1.7rem);letter-spacing:-0.022em;line-height:1.24;margin-top:10px;text-wrap:balance">
+          Ask the sample index something. Then ask it something it cannot know.
+        </p>
+
+        <form class="ask__form" id="ask-form" autocomplete="off">
+          <span class="ask__caret" aria-hidden="true">&gt;</span>
+          <label class="k-sr" for="ask-input" id="ask-label">Ask the sample index a question</label>
+          <input class="ask__input" id="ask-input" type="text" name="q"
+                 placeholder="what is cross validation for?" maxlength="160">
+          <button class="ask__go" id="ask-go" type="submit">Search</button>
+        </form>
+
+        <p class="ask__status" id="ask-status" role="status"></p>
+
+        <div class="res" id="ask-results" aria-live="polite">
+          <p class="res__rest">Results arrive with the page they came off. Try something the
+            sample index does not contain, and read what it says instead.</p>
+        </div>
+
+        <div class="ask__foot">
+          <a class="ask__cta" id="cta" href="#top">Open KnowlyAI</a>
+          <label class="ask__up" id="ask-up" hidden>
+            <input class="k-sr" id="ask-file" type="file" accept="application/pdf,.pdf">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 11V3M4.5 6.5 8 3l3.5 3.5M3 13h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            Add a PDF
+          </label>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- The navigation. App chrome, not a marketing bar: the readouts on the right
+     are live, and the threshold one is written by the gate four acts up. -->
+<nav class="bar" aria-label="Sections and index state">
+  <a class="bar__mark" href="index.html" title="Back to the KnowlyAI landing page">
+    <span class="bar__name">KNOWLY<b>AI</b></span>
+  </a>
+
+  <span class="bar__nav" id="bar-nav">
+    <a class="bar__seg" href="#index">Index</a>
+    <a class="bar__seg" href="#unsourced">Unsourced</a>
+    <a class="bar__seg" href="#passages">Passages</a>
+    <a class="bar__seg" href="#retrieval">Retrieval</a>
+    <a class="bar__seg" href="#threshold">Threshold</a>
+    <a class="bar__seg" href="#ask">Ask</a>
+  </span>
+
+  <span class="bar__read">
+    <span class="rd-api">api <b id="rd-api">...</b></span>
+    <span class="rd-chunks">passages <b id="rd-chunks">0</b></span>
+    <span>&#952; <b id="rd-theta">0.700</b></span>
+    <span>kept <b id="rd-kept">0</b></span>
+  </span>
+</nav>
+
+<script src="scrollcraft.js"></script>
+<script src="knowly.js"></script>
+</body>
+</html>

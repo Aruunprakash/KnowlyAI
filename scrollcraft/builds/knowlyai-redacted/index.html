@@ -1,0 +1,454 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KnowlyAI · source or silence</title>
+<meta name="description" content="KnowlyAI answers questions about your own PDFs and puts the page behind every sentence. A sentence with no source does not get written.">
+<meta name="color-scheme" content="light">
+<!-- Where the KnowlyAI API runs. Empty means same origin. ?api= overrides. -->
+<meta name="knowly-api" content="http://127.0.0.1:8000">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23561530'/><rect x='6' y='13' width='20' height='6' fill='%23F5AD18'/></svg>">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=IBM+Plex+Mono:wght@400;500;700&display=swap">
+
+<link rel="stylesheet" href="scrollcraft.css">
+<style>
+/* ===========================================================================
+   KnowlyAI · redacted
+   Paper with plum #561530, amber #F5AD18, berry #9E1C60, wine #811844.
+   Type is the imagery. Every act lands on
+   its own ground: hard cuts, no interpolated drift.
+   ======================================================================== */
+:root {
+  --sc-canvas:     #F0F0EC;
+  --sc-surface:    #FFFFFF;
+  --sc-ink:        #561530;
+  --sc-ink-soft:   #5E4452;
+  --sc-accent:     #F5AD18;
+  --sc-accent-ink: #561530;
+
+  --sc-font-display: "Archivo", "Arial Narrow", system-ui, sans-serif;
+  --sc-font-text:    "Archivo", system-ui, sans-serif;
+  --sc-font-mono:    "IBM Plex Mono", ui-monospace, monospace;
+
+  --x-paper: #F0F0EC;
+  --x-black: #561530;
+  --x-orange-text: #9E1C60;   /* amber is too light as small text on paper; berry keeps 6.6:1 */
+  --x-berry: #9E1C60;
+  --x-wine:  #811844;
+  --x-rule: 3px;
+  --x-hard: 7px 7px 0 var(--x-black);
+}
+
+/* One continuous ground. redact.js blends --sc-canvas between each act's
+   data-ground colour as the scroll passes the seam, and flips --x-fg to
+   whichever ink reads best on the blended colour. No act paints its own
+   background, so there is no edge anywhere to cut on. */
+html { background: var(--sc-canvas); }
+body { background: transparent; color: var(--x-fg, var(--x-black)); font-stretch: 100%; }
+
+.wrap { width: min(100% - (var(--sc-gutter) * 2), 1360px); margin-inline: auto; }
+
+
+.mono {
+  font-family: var(--sc-font-mono);
+  font-size: 12px; font-weight: 500;
+  letter-spacing: 0.06em; text-transform: uppercase;
+}
+
+/* The one CTA label on the page, in two weights. */
+.cta {
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 14px 20px 15px;
+  background: var(--x-black); color: var(--x-paper);
+  border: var(--x-rule) solid var(--x-black);
+  box-shadow: 6px 6px 0 var(--sc-accent);
+  font-family: var(--sc-font-display); font-stretch: 112%; font-weight: 800;
+  font-size: 15px; letter-spacing: 0.02em; text-transform: uppercase; text-decoration: none;
+  transition: transform 120ms var(--sc-ease-out), box-shadow 120ms var(--sc-ease-out);
+}
+.cta:hover { transform: translate(-2px, -2px); box-shadow: 8px 8px 0 var(--sc-accent); }
+.cta:active { transform: translate(4px, 4px); box-shadow: 2px 2px 0 var(--sc-accent); }
+.cta svg { width: 16px; height: 16px; }
+
+:focus-visible { outline: 3px solid var(--sc-accent); outline-offset: 3px; border-radius: 0; }
+
+/* ================================================================ 1 · demand
+   Three type planes. The outlined page number recedes and grows, the
+   headline barely moves, the tape crosses fast in front. All of it reads
+   --sc-p, which the engine publishes on the act. */
+#hero [data-sc-stage] { overflow: hidden; }
+.hero {
+  position: relative; height: 100%;
+  display: grid; grid-template-rows: auto 1fr auto;
+  padding: clamp(16px, 3vh, 32px) var(--sc-gutter) calc(clamp(64px, 13vh, 130px));
+}
+.hero__back {
+  position: absolute; inset: 0; z-index: 0;
+  display: grid; place-items: center; pointer-events: none;
+  transform: translate3d(calc(var(--sc-p, 0) * -6vw), calc(var(--sc-p, 0) * -14vh), 0) scale(calc(1 + var(--sc-p, 0) * 0.7));
+  transform-origin: 70% 50%;
+}
+.hero__back span {
+  font-family: var(--sc-font-display); font-stretch: 62%; font-weight: 900;
+  font-size: min(56vw, 88vh); line-height: 0.8; letter-spacing: -0.04em;
+  color: transparent; -webkit-text-stroke: 3px color-mix(in oklab, var(--x-black) 34%, transparent);
+  translate: 24vw 2vh;
+}
+@media (max-width: 760px) {
+  .hero__back span { font-size: 92vw; translate: 4vw -6vh; -webkit-text-stroke-width: 2px; }
+}
+
+.hero__top { position: relative; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.mark {
+  display: inline-block; padding: 6px 10px 7px;
+  background: var(--x-black); color: var(--x-paper);
+  font-family: var(--sc-font-display); font-stretch: 125%; font-weight: 900;
+  font-size: clamp(20px, 2.6vw, 38px); line-height: 1; letter-spacing: -0.02em;
+}
+.mark b { color: var(--sc-accent); font-weight: 900; }
+.sticker {
+  display: inline-block; padding: 7px 12px;
+  border: var(--x-rule) solid var(--x-black); background: var(--x-paper); color: var(--x-black);
+  font-family: var(--sc-font-mono); font-weight: 700; font-size: 12px; letter-spacing: 0.14em;
+  rotate: 4deg; box-shadow: 4px 4px 0 var(--x-black);
+}
+
+.hero__h {
+  position: relative; z-index: 1; align-self: center;
+  margin: 0; display: flex; flex-direction: column;
+  font-family: var(--sc-font-display); font-stretch: 62%; font-weight: 900;
+  font-size: min(18.5vw, 31vh); line-height: 0.84; letter-spacing: -0.035em;
+  text-transform: uppercase;
+  transform: translate3d(0, calc(var(--sc-p, 0) * -5vh), 0) scale(calc(1 - var(--sc-p, 0) * 0.07));
+  transform-origin: 0 50%;
+}
+.hero__h span:last-child { padding-left: 0.04em; }
+.hero__h em { font-style: normal; background: var(--sc-accent); padding: 0 0.04em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+
+.hero__sub {
+  position: relative; z-index: 2;
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 18px 32px;
+}
+.hero__sub p {
+  max-width: 34ch; margin: 0;
+  font-size: clamp(16px, 1.35vw, 20px); line-height: 1.42; font-weight: 500;
+  background: var(--sc-canvas); box-shadow: 0 0 0 6px var(--sc-canvas);
+}
+
+.tape {
+  position: absolute; left: -10vw; right: -10vw; bottom: clamp(10px, 3.4vh, 34px); z-index: 3;
+  height: clamp(38px, 5.4vh, 54px);
+  background: var(--sc-accent); color: var(--x-black);
+  border-block: var(--x-rule) solid var(--x-black);
+  display: flex; align-items: center; overflow: hidden; white-space: nowrap;
+  rotate: -2.2deg;
+  font-family: var(--sc-font-mono); font-weight: 700; font-size: clamp(12px, 1.2vw, 15px); letter-spacing: 0.1em;
+}
+.tape span { display: block; transform: translate3d(calc(var(--sc-p, 0) * -38vw), 0, 0); }
+
+/* ================================================================== 2 · lies */
+.lies { padding-block: clamp(4rem, 12vh, 9rem) clamp(4rem, 10vh, 8rem); }
+.lies__h {
+  margin: 0; max-width: 13ch;
+  font-family: var(--sc-font-display); font-stretch: 125%; font-weight: 900;
+  font-size: clamp(2.6rem, 8.4vw, 9.5rem); line-height: 0.9; letter-spacing: -0.045em; text-transform: uppercase;
+}
+@media (max-width: 560px) { .lies__h { font-stretch: 100%; font-size: 10.6vw; letter-spacing: -0.035em; } }
+.lies__lede { max-width: 46ch; margin: 22px 0 0; font-size: clamp(15px, 1.2vw, 18px); line-height: 1.5; }
+
+.wall {
+  list-style: none; margin: clamp(32px, 6vh, 64px) 0 0; padding: 0;
+  display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px;
+  align-items: start;
+}
+.w {
+  position: relative; grid-column: span 4;
+  padding: 18px 18px 46px;
+  border: var(--x-rule) solid var(--x-black); background: var(--x-paper); color: var(--x-black);
+  font-family: var(--sc-font-display); font-weight: 800; font-stretch: 88%;
+  font-size: clamp(19px, 1.8vw, 28px); line-height: 1.08; letter-spacing: -0.02em;
+}
+.w q { quotes: "\201C" "\201D"; }
+.w--xl  { grid-column: span 8; font-size: clamp(30px, 4.4vw, 72px); font-stretch: 70%; font-weight: 900; line-height: 0.95; }
+.w--black { background: var(--x-black); color: var(--x-paper); }
+.w--orange { background: var(--sc-accent); }
+.w--berry { background: var(--x-berry); color: var(--x-paper); }
+.w--wine { background: var(--x-wine); color: var(--x-paper); }
+.w--berry .flag, .w--wine .flag { background: var(--sc-accent); color: var(--x-black); }
+.w--rot { rotate: -2.5deg; box-shadow: var(--x-hard); }
+.w--rot2 { rotate: 1.8deg; }
+.w--mono { font-family: var(--sc-font-mono); font-weight: 500; font-size: 15px; line-height: 1.5; letter-spacing: 0; text-transform: uppercase; }
+.w--wide { grid-column: span 6; }
+.w--outline { color: transparent; -webkit-text-stroke: 1.5px var(--x-black); font-size: clamp(26px, 3.2vw, 50px); font-weight: 900; line-height: 0.98; }
+.w--outline .flag { -webkit-text-stroke: 0; }
+.flag {
+  position: absolute; right: -3px; bottom: -3px;
+  padding: 5px 9px; background: var(--x-black); color: var(--x-paper);
+  font-family: var(--sc-font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; line-height: 1.2;
+  text-transform: uppercase; -webkit-text-stroke: 0;
+}
+.w--black .flag { background: var(--sc-accent); color: var(--x-black); }
+@media (max-width: 900px) {
+  .wall { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; }
+  .w, .w--wide { grid-column: span 3; }
+  .w--xl { grid-column: span 6; }
+}
+@media (max-width: 560px) {
+  .w, .w--wide, .w--xl { grid-column: span 6; }
+  .w--rot, .w--rot2 { rotate: 0deg; }
+}
+
+/* ================================================================== 3 · hush
+   Authored silence. One line on black. BRIEF.md declares it. */
+.hush { min-height: 130svh; display: grid; align-items: center; }
+.hush__line {
+  margin: 0; max-width: 32ch;
+  font-size: 17px; line-height: 1.5; font-weight: 500;
+}
+
+/* ============================================================= 4 · redaction */
+.rx {
+  position: relative; height: 100%;
+  display: flex; flex-direction: column; justify-content: center;
+  padding-block: clamp(18px, 4vh, 44px);
+}
+.rx-hd {
+  display: flex; flex-wrap: wrap; align-items: stretch; gap: 0;
+  border: var(--x-rule) solid var(--x-black); background: var(--x-black); color: var(--x-paper);
+}
+.rx-hd > * { padding: 10px 14px; }
+.rx-q { flex: 1 1 22rem; font-family: var(--sc-font-mono); font-size: 13px; font-weight: 500; line-height: 1.45; }
+.rx-tally {
+  display: flex; gap: 0; flex: 0 0 auto; padding: 0;
+  font-family: var(--sc-font-mono); font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.rx-tally > span { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-left: var(--x-rule) solid var(--x-paper); font-variant-numeric: tabular-nums; }
+.rx-tally > span:last-child { background: var(--sc-accent); color: var(--x-black); border-left-color: var(--x-black); }
+
+.rx-doc {
+  position: relative;
+  border: var(--x-rule) solid var(--x-black); border-top: 0; background: var(--sc-surface); color: var(--x-black);
+  padding: clamp(16px, 3vh, 34px) clamp(16px, 2.6vw, 40px) clamp(20px, 3.4vh, 40px);
+  font-family: var(--sc-font-display); font-stretch: 92%; font-weight: 700;
+  font-size: clamp(17px, min(2.8vw, 4vh), 44px); line-height: 1.32; letter-spacing: -0.018em;
+  box-shadow: var(--x-hard);
+}
+.rx-doc p { margin: 0; }
+.rx-s {
+  background-repeat: no-repeat; background-position: 0 0;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+  padding: 0 0.06em;
+}
+/* struck: a black bar drawn left to right across each line of the sentence */
+.rx-s--x {
+  background-image: linear-gradient(var(--x-black), var(--x-black));
+  background-size: calc(var(--k, 0) * 100%) 100%;
+  cursor: pointer; border-radius: 0;
+}
+.rx-s--x.is-lifted { background-size: 0 100%; outline: 2px dashed var(--x-black); outline-offset: 1px; }
+/* cited: an orange highlight drawn the same way, then its page tag */
+.rx-s--ok {
+  background-image: linear-gradient(var(--sc-accent), var(--sc-accent));
+  background-size: calc(var(--k, 0) * 100%) 100%;
+}
+.rx-tag {
+  display: inline-block; margin: 0 0.25em 0 0.15em; padding: 0.12em 0.36em 0.1em;
+  vertical-align: 0.32em; border: 2px solid var(--x-black); background: var(--x-paper);
+  font-family: var(--sc-font-mono); font-size: 0.42em; font-weight: 700; line-height: 1.1; letter-spacing: 0.04em;
+  opacity: var(--t, 0); transform: translate3d(0, calc((1 - var(--t, 0)) * -6px), 0);
+}
+
+.rx-stamp {
+  position: absolute; left: 50%; top: 54%; z-index: 5; pointer-events: none;
+  padding: 0.16em 0.28em 0.12em;
+  background: var(--x-berry); color: var(--x-paper);
+  border: 0.06em solid var(--x-black); box-shadow: 0.09em 0.09em 0 var(--x-black);
+  font-family: var(--sc-font-display); font-stretch: 70%; font-weight: 900;
+  font-size: clamp(42px, 8.6vw, 140px); line-height: 0.86; letter-spacing: -0.03em; text-transform: uppercase;
+  white-space: nowrap; text-align: center;
+  opacity: var(--s, 0);
+  /* slam (--s), then file itself in the corner (--m) so what survived can be read */
+  transform:
+    translate(calc(-50% + var(--m, 0) * var(--mx, 0px)), calc(-50% + var(--m, 0) * var(--my, 0px)))
+    rotate(calc(-7deg + var(--m, 0) * 3deg))
+    scale(calc((1 + (1 - var(--s, 0)) * 0.9) * (1 - var(--m, 0) * 0.62)));
+}
+.rx-foot {
+  margin: 18px 0 0; min-height: 3em; max-width: 70ch;
+  font-family: var(--sc-font-mono); font-size: 12.5px; line-height: 1.55;
+}
+.rx-foot b { background: var(--x-black); color: var(--x-paper); padding: 1px 5px; font-weight: 700; }
+@media (max-width: 760px) {
+  .rx-doc { font-size: 16px; line-height: 1.36; box-shadow: 5px 5px 0 var(--x-black); }
+  .rx-q { font-size: 11.5px; }
+  .rx-tally { font-size: 11px; width: 100%; }
+  .rx-tally > span { flex: 1 1 50%; border-left: 0; border-top: var(--x-rule) solid var(--x-paper); }
+  .rx-tally > span:last-child { border-top-color: var(--x-black); }
+  .rx-foot { font-size: 11px; margin-top: 12px; }
+  .rx-stamp { font-size: 13vw; top: 50%; }
+}
+
+/* =============================================================== 5 · method */
+/* Each word owns its full line and the sentence sits under it, so the word
+   can be as wide as the page without ever running into its own copy. The
+   anchor alternates: lead, trail, lead. */
+.method { padding-block: clamp(3.5rem, 10vh, 8rem); }
+.m-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: clamp(12px, 2.2vh, 22px);
+  padding-block: clamp(18px, 3.4vh, 34px);
+  border-bottom: var(--x-rule) solid currentColor;
+}
+.m-row:first-child { border-top: var(--x-rule) solid currentColor; }
+.m-row--flip { align-items: flex-end; text-align: right; }
+.m-word {
+  margin: 0; max-width: 100%;
+  font-family: var(--sc-font-display); font-stretch: 125%; font-weight: 900;
+  font-size: clamp(2.3rem, 9.6vw, 10.5rem); line-height: 0.82; letter-spacing: -0.05em; text-transform: uppercase;
+  white-space: nowrap;
+}
+.m-word--ink { background: var(--x-black); color: var(--sc-accent); padding: 0.04em 0.1em 0.02em; }
+.m-row p { margin: 0; font-size: clamp(15px, 1.2vw, 18px); line-height: 1.48; font-weight: 500; max-width: 40ch; }
+.m-row p .mono { display: block; margin-bottom: 8px; }
+
+/* ================================================================ 6 · close
+   The poster inverts: the smallest type on the site, one link, held. */
+.close { min-height: 100svh; display: grid; align-items: center; }
+.close__in { max-width: 44ch; }
+.close__lead { margin: 0; font-size: 15px; line-height: 1.6; }
+.close__cta {
+  display: inline-block; margin-top: 22px;
+  color: var(--sc-accent); font-weight: 700; font-size: 15px;
+  text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 5px;
+}
+.close__cta:hover { color: var(--x-paper); }
+.close__alt { color: inherit; text-decoration: underline; text-underline-offset: 4px; }
+.close__alt:hover { color: var(--sc-accent); }
+.close__live { margin: 28px 0 0; font-family: var(--sc-font-mono); font-size: 11.5px; line-height: 1.6; color: inherit; opacity: 0.86; display: flex; gap: 9px; align-items: baseline; }
+.close__live::before { content: ""; width: 7px; height: 7px; flex: 0 0 auto; background: #6E6E68; translate: 0 -1px; }
+.close__live[hidden] { display: none; }
+.close__live.is-live::before { background: var(--sc-accent); }
+.close__small { margin: 10px 0 0; font-family: var(--sc-font-mono); font-size: 11.5px; line-height: 1.6; color: inherit; opacity: 0.86; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero__back, .hero__h, .tape span { transform: none; }
+  .cta { transition: none; }
+}
+</style>
+</head>
+<body>
+
+<main id="top">
+
+  <!-- ================================================ 1 · CONFRONTATION · pin -->
+  <section id="hero" data-ground="#F0F0EC" data-sc-act="pin" data-sc-span="1.5">
+    <div data-sc-stage>
+      <div class="hero">
+        <div class="hero__back" aria-hidden="true"><span>p.41</span></div>
+
+        <div class="hero__top">
+          <span class="mark">KNOWLY<b>AI</b></span>
+          <span class="sticker">EXHIBIT A</span>
+        </div>
+
+        <h1 class="hero__h"><span>Source</span><span>or <em>silence.</em></span></h1>
+
+        <div class="hero__sub">
+          <p>Ask questions about your own PDFs. Every answer cites the page it came from. No page, no answer.</p>
+          <a class="cta" href="app/">Ask your documents
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" stroke-width="2.2" stroke-linecap="square"/></svg>
+          </a>
+        </div>
+
+        <div class="tape" aria-hidden="true"><span>EVERY SENTENCE CARRIES ITS PAGE NUMBER ■ NO PAGE NO ANSWER ■ EVERY SENTENCE CARRIES ITS PAGE NUMBER ■ NO PAGE NO ANSWER ■ EVERY SENTENCE CARRIES ITS PAGE NUMBER ■ NO PAGE NO ANSWER ■ EVERY SENTENCE CARRIES ITS PAGE NUMBER ■</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================= 2 · IRRITATION · flow -->
+  <section id="lies" class="lies" data-ground="#F0F0EC" data-sc-act="flow">
+    <div class="wrap">
+      <h2 class="lies__h" data-sc-cue="0.04" data-sc-kinetic="lines">AI will tell you anything. Confidently.</h2>
+      <p class="lies__lede">Every claim below was invented for this page, the way a chatbot invents them: fluent, specific, and impossible to check. You could not tell. That is the problem.</p>
+
+      <ul class="wall" data-sc-in data-sc-stagger="55">
+        <li class="w w--xl"><q>73% of models overfit once they reach production.</q><span class="flag">No source</span></li>
+        <li class="w w--black w--rot2"><q>Dropout at 0.5 is the industry standard.</q><span class="flag">Unverifiable</span></li>
+        <li class="w w--mono w--wine"><q>Most practitioners agree.</q><span class="flag">Who?</span></li>
+        <li class="w w--orange w--rot"><q>Cross-validation was invented at MIT in 1974.</q><span class="flag">Made up</span></li>
+        <li class="w w--outline w--wide"><q>The original paper proves it, on page 112.</q><span class="flag">There is no page 112</span></li>
+        <li class="w w--berry"><q>Early stopping always helps.</q><span class="flag">No source</span></li>
+        <li class="w w--black"><q>More data fixes bias.</q><span class="flag">Not in your documents</span></li>
+        <li class="w w--wide w--rot2"><q>This is well documented in the literature.</q><span class="flag">Which literature?</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ====================================================== 3 · HUSH · flow -->
+  <!-- Authored silence. One line on wine, nothing else. -->
+  <section id="hush" class="hush" data-ground="#811844" data-sc-act="flow">
+    <div class="wrap">
+      <p class="hush__line" data-sc-cue="0.3">So we built one that has to show its work.</p>
+    </div>
+  </section>
+
+  <!-- ========================================= 4 · VINDICATION · pin · PEAK -->
+  <section id="redaction" data-ground="#F0F0EC" data-sc-act="pin" data-sc-span="3.6">
+    <div data-sc-stage>
+      <div class="rx wrap">
+        <div class="rx-hd">
+          <span class="rx-q">Q: Why does a model do well in training and badly on new data?</span>
+          <span class="rx-tally" aria-live="polite">
+            <span>Struck <b><span id="rx-struck">0</span>/<span id="rx-n-struck">0</span></b></span>
+            <span>Cited <b><span id="rx-cited">0</span>/<span id="rx-n-cited">0</span></b></span>
+          </span>
+        </div>
+        <div class="rx-doc">
+          <p id="rx-doc"></p>
+          <div class="rx-stamp" id="rx-stamp" aria-hidden="true">Not in your<br>documents.</div>
+        </div>
+        <p class="rx-foot" id="rx-foot">An answer written with no documents behind it. Keep going and KnowlyAI checks every sentence against the sample index.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================================================== 5 · CLARITY · reveal -->
+  <section id="method" class="method" data-ground="#9E1C60" data-sc-act="flow">
+    <div class="wrap">
+      <div class="m-row">
+        <h2 class="m-word" data-sc-reveal="left" data-sc-reveal-at="0.1 0.26">Split.</h2>
+        <p><span class="mono">One</span>Your PDF is cut into overlapping passages, each one tagged with the page it came off.</p>
+      </div>
+      <div class="m-row m-row--flip">
+        <h2 class="m-word" data-sc-reveal="right" data-sc-reveal-at="0.2 0.36">Retrieve.</h2>
+        <p><span class="mono">Two</span>Your question pulls the closest passages, four by default, each with a similarity score.</p>
+      </div>
+      <div class="m-row">
+        <h2 class="m-word m-word--ink" data-sc-reveal="left" data-sc-reveal-at="0.3 0.46">Cite.</h2>
+        <p><span class="mono">Three</span>The model writes only from those passages and marks every sentence with the one it used. No passage, no sentence.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================================================== 6 · RESOLVE · flow -->
+  <footer id="ask" class="close" data-ground="#561530" data-sc-act="flow">
+    <div class="wrap">
+      <div class="close__in">
+        <p class="close__lead">KnowlyAI answers questions about your own PDFs and puts the page behind every sentence. When there is no page, it says so.</p>
+        <a class="close__cta" href="app/">Ask your documents</a>
+        <p class="close__small"><a class="close__alt" href="console.html">Or watch it refuse first, step by step.</a></p>
+        <p class="close__live" id="live-line" role="status" hidden></p>
+        <p class="close__small">Runs on your own machine: FastAPI, Chroma, Gemini.</p>
+      </div>
+    </div>
+  </footer>
+
+</main>
+
+<script src="scrollcraft.js"></script>
+<script src="redact.js"></script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-streamlit
+# RAG pipeline
 langchain
 langchain-community
 langchain-text-splitters
@@ -7,3 +7,9 @@ langchain-chroma
 chromadb
 pypdf
 python-dotenv
+
+# HTTP API (api/)
+fastapi
+uvicorn[standard]
+python-multipart
+anyio

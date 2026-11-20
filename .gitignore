@@ -1,20 +1,33 @@
 # Environment
 .venv/
 .venv312/
+.venv-win/
 venv/
 
-# PyCharm
+# PyCharm / VS
 .idea/
+.vs/
 
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # Environment variables
 .env
 
-# Vector database
+# Vector database and uploaded documents
 chroma_db/
+storage/
+
+# Frontend
+web/node_modules/
+web/dist/
+web/.env.local
 
 # macOS
 .DS_Store
+
+# Scroll pages: per-build tooling and verification output
+scrollcraft/builds/*/node_modules/
+scrollcraft/builds/*/lab/*/

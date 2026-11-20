@@ -1,0 +1,252 @@
+@import 'tailwindcss';
+/* Self-hosted so the UI has no third-party font request. Subsets are split by
+   unicode-range, so a browser only fetches the ranges it actually renders.
+   Archivo is loaded with its width axis: the display type is the condensed
+   cut, the same family the landing page and console use. */
+@import '@fontsource-variable/archivo/wdth.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/700.css';
+
+/* ---------------------------------------------------------------------------
+   Design tokens
+
+   One system with the landing page and the console: paper ground, plum ink,
+   amber as a fill, berry where colour has to be readable as small text, wine
+   for depth. Brutalist structure: square corners, hard offset shadows with no
+   blur, rules you can see.
+
+   Raw values live on :root and are redefined for the dark theme. `@theme inline`
+   maps them onto Tailwind utilities by reference, so `bg-surface` resolves at
+   runtime and switching `data-theme` repaints without a rebuild.
+
+     plum   #561530   amber  #F5AD18   berry  #9E1C60   wine  #811844
+--------------------------------------------------------------------------- */
+
+:root {
+  --surface: #f0f0ec;
+  --surface-raised: #ffffff;
+  --surface-sunken: #e7e4dd;
+  --surface-inset: #dcd7ce;
+  --surface-overlay: rgb(86 21 48 / 0.42);
+
+  --border: #561530;
+  --border-strong: #561530;
+  --rule: #cfc6c0; /* quiet separators inside a list, where plum would shout */
+
+  --text: #561530;
+  --text-muted: #5e4452;
+  --text-subtle: #725b67;
+
+  --accent: #f5ad18;
+  --accent-hover: #ffbe33;
+  --accent-fg: #561530;
+  --accent-subtle: #fbe6b4;
+  --accent-border: #561530;
+  --accent-ink: #9e1c60; /* the accent as text or an icon on paper: amber cannot be read there */
+
+  --focus: #561530;
+
+  --success: #3c6b34;
+  --warning: #9a6200;
+  --danger: #9e1c60;
+  --danger-subtle: #f4d9e6;
+
+  --highlight: #f5ad18;
+
+  --hard: #561530; /* the colour of every offset shadow */
+}
+
+[data-theme='dark'] {
+  --surface: #2e0b19;
+  --surface-raised: #3f1024;
+  --surface-sunken: #24080f;
+  --surface-inset: #561530;
+  --surface-overlay: rgb(20 4 10 / 0.66);
+
+  --border: #e9dde2;
+  --border-strong: #f0f0ec;
+  --rule: #6b2a45;
+
+  --text: #f0f0ec;
+  --text-muted: #dcc8d0;
+  --text-subtle: #bfa2b0;
+
+  --accent: #f5ad18;
+  --accent-hover: #ffbe33;
+  --accent-fg: #561530;
+  --accent-subtle: #5a2a12;
+  --accent-border: #f5ad18;
+  --accent-ink: #f5ad18;
+
+  --focus: #f5ad18;
+
+  --success: #8fc983;
+  --warning: #f5ad18;
+  --danger: #f08bbd;
+  --danger-subtle: #4d1230;
+
+  --highlight: #811844;
+
+  --hard: #0f0306;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+  --color-surface-inset: var(--surface-inset);
+  --color-surface-overlay: var(--surface-overlay);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-rule: var(--rule);
+
+  --color-text: var(--text);
+  --color-text-muted: var(--text-muted);
+  --color-text-subtle: var(--text-subtle);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-border: var(--accent-border);
+  --color-accent-ink: var(--accent-ink);
+  --color-focus: var(--focus);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-highlight: var(--highlight);
+
+  --font-sans: 'Archivo Variable', 'Arial Narrow', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Menlo, monospace;
+
+  /* Square, everywhere. */
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+
+  /* Hard offset shadows, no blur. Depth is a slab, not a glow. */
+  --shadow-xs: 2px 2px 0 var(--hard);
+  --shadow-sm: 3px 3px 0 var(--hard);
+  --shadow-md: 5px 5px 0 var(--hard);
+  --shadow-lg: 8px 8px 0 var(--hard);
+
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+}
+
+/* --------------------------------------------------------------------------- */
+
+@layer base {
+  * {
+    border-color: var(--rule);
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    background-color: var(--surface);
+    color: var(--text);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overscroll-behavior: none;
+  }
+
+  ::selection {
+    background-color: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 0;
+  }
+
+  /* Native focus rings are replaced per-component; never remove them outright. */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+
+  input,
+  textarea {
+    caret-color: var(--accent-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* The condensed 900 display cut, shared with the landing page and console. */
+  .type-display {
+    font-family: var(--font-sans);
+    font-stretch: 62%;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: -0.03em;
+    line-height: 0.9;
+  }
+
+  /* Uppercase mono labels: section heads, chips, metadata. */
+  .type-label {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    background-color: var(--border-strong);
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-thumb:hover {
+    background-color: var(--text-subtle);
+  }
+
+  /* Hairline that stays 1 physical pixel on high-DPI screens. */
+  .hairline-t {
+    box-shadow: inset 0 1px 0 var(--rule);
+  }
+}

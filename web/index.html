@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="KnowlyAI answers questions about your documents and shows the page each answer came from."
+    />
+    <title>KnowlyAI · app</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' fill='%23561530'/><rect x='6' y='13' width='20' height='6' fill='%23F5AD18'/></svg>"
+    />
+    <script>
+      // Applied before first paint so the correct theme is painted once, with no flash.
+      // Light unless dark was chosen, to match the landing page and console.
+      try {
+        const dark = localStorage.getItem('knowly.theme') === 'dark'
+        document.documentElement.dataset.theme = dark ? 'dark' : 'light'
+      } catch {
+        document.documentElement.dataset.theme = 'light'
+      }
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
